@@ -36,7 +36,7 @@ echo "                Data & Lexicon & Language Preparation                     
 echo ============================================================================
 
 #timit=/export/corpora5/LDC/LDC93S1/timit/TIMIT # @JHU
-timit=/mnt/matylda2/data/TIMIT/timit # @BUT
+timit=/home/shvo/Projects/datasets/TIMIT
 
 local/timit_data_prep.sh $timit || exit 1
 
@@ -50,69 +50,74 @@ utils/prepare_lang.sh --sil-prob 0.0 --position-dependent-phones false --num-sil
 local/timit_format_data.sh
 
 echo ============================================================================
-echo "         MFCC Feature Extration & CMVN for Training and Test set          "
+echo "         MFCC and Fbank Feature Extration & CMVN for Training and Test set          "
 echo ============================================================================
 
-# Now make MFCC features.
-mfccdir=mfcc
+# Now make MFCC & Fbank features.
 
+rm -rf data/mfcc && mkdir -p data/mfcc && cp -r data/{train,dev,test} data/mfcc
+rm -rf data/fbank && mkdir -p data/fbank && cp -r data/{train,dev,test} data/fbank
 
 for x in train dev test; do
-  steps/make_mfcc.sh --cmd "$train_cmd" --nj $feats_nj data/$x exp/make_mfcc/$x $mfccdir
-  steps/compute_cmvn_stats.sh data/$x exp/make_mfcc/$x $mfccdir
+  # make mfcc and fbank
+  steps/make_mfcc.sh --cmd "$train_cmd" --nj $feats_nj data/mfcc/$x exp/make_mfcc/$x mfcc
+  steps/make_fbank.sh --cmd "$train_cmd" --nj $feats_nj data/fbank/$x exp/make_fbank/$x fbank
+  # compute cmvn
+  steps/compute_cmvn_stats.sh data/mfcc/$x exp/make_mfcc/$x mfcc
+  steps/compute_cmvn_stats.sh data/fbank/$x exp/make_fbank/$x fbank
 done
 
 echo ============================================================================
 echo "                     MonoPhone Training & Decoding                        "
 echo ============================================================================
 
-steps/train_mono.sh  --nj "$train_nj" --cmd "$train_cmd" data/train data/lang exp/mono
+steps/train_mono.sh  --nj "$train_nj" --cmd "$train_cmd" data/mfcc/train data/lang exp/mono
 
 utils/mkgraph.sh data/lang_test_bg exp/mono exp/mono/graph
 
 steps/decode.sh --nj "$decode_nj" --cmd "$decode_cmd" \
- exp/mono/graph data/dev exp/mono/decode_dev
+ exp/mono/graph data/mfcc/dev exp/mono/decode_dev
 
 steps/decode.sh --nj "$decode_nj" --cmd "$decode_cmd" \
- exp/mono/graph data/test exp/mono/decode_test
+ exp/mono/graph data/mfcc/test exp/mono/decode_test
 
 echo ============================================================================
 echo "           tri1 : Deltas + Delta-Deltas Training & Decoding               "
 echo ============================================================================
 
 steps/align_si.sh --boost-silence 1.25 --nj "$train_nj" --cmd "$train_cmd" \
- data/train data/lang exp/mono exp/mono_ali
+ data/mfcc/train data/lang exp/mono exp/mono_ali
 
 # Train tri1, which is deltas + delta-deltas, on train data.
 steps/train_deltas.sh --cmd "$train_cmd" \
- $numLeavesTri1 $numGaussTri1 data/train data/lang exp/mono_ali exp/tri1
+ $numLeavesTri1 $numGaussTri1 data/mfcc/train data/lang exp/mono_ali exp/tri1
 
 utils/mkgraph.sh data/lang_test_bg exp/tri1 exp/tri1/graph
 
 steps/decode.sh --nj "$decode_nj" --cmd "$decode_cmd" \
- exp/tri1/graph data/dev exp/tri1/decode_dev
+ exp/tri1/graph data/mfcc/dev exp/tri1/decode_dev
 
 steps/decode.sh --nj "$decode_nj" --cmd "$decode_cmd" \
- exp/tri1/graph data/test exp/tri1/decode_test
+ exp/tri1/graph data/mfcc/test exp/tri1/decode_test
 
 echo ============================================================================
 echo "                 tri2 : LDA + MLLT Training & Decoding                    "
 echo ============================================================================
 
 steps/align_si.sh --nj "$train_nj" --cmd "$train_cmd" \
-  data/train data/lang exp/tri1 exp/tri1_ali
+  data/mfcc/train data/lang exp/tri1 exp/tri1_ali
 
 steps/train_lda_mllt.sh --cmd "$train_cmd" \
  --splice-opts "--left-context=3 --right-context=3" \
- $numLeavesMLLT $numGaussMLLT data/train data/lang exp/tri1_ali exp/tri2
+ $numLeavesMLLT $numGaussMLLT data/mfcc/train data/lang exp/tri1_ali exp/tri2
 
 utils/mkgraph.sh data/lang_test_bg exp/tri2 exp/tri2/graph
 
 steps/decode.sh --nj "$decode_nj" --cmd "$decode_cmd" \
- exp/tri2/graph data/dev exp/tri2/decode_dev
+ exp/tri2/graph data/mfcc/dev exp/tri2/decode_dev
 
 steps/decode.sh --nj "$decode_nj" --cmd "$decode_cmd" \
- exp/tri2/graph data/test exp/tri2/decode_test
+ exp/tri2/graph data/mfcc/test exp/tri2/decode_test
 
 echo ============================================================================
 echo "              tri3 : LDA + MLLT + SAT Training & Decoding                 "
@@ -120,43 +125,43 @@ echo ===========================================================================
 
 # Align tri2 system with train data.
 steps/align_si.sh --nj "$train_nj" --cmd "$train_cmd" \
- --use-graphs true data/train data/lang exp/tri2 exp/tri2_ali
+ --use-graphs true data/mfcc/train data/lang exp/tri2 exp/tri2_ali
 
 # From tri2 system, train tri3 which is LDA + MLLT + SAT.
 steps/train_sat.sh --cmd "$train_cmd" \
- $numLeavesSAT $numGaussSAT data/train data/lang exp/tri2_ali exp/tri3
+ $numLeavesSAT $numGaussSAT data/mfcc/train data/lang exp/tri2_ali exp/tri3
 
 utils/mkgraph.sh data/lang_test_bg exp/tri3 exp/tri3/graph
 
 steps/decode_fmllr.sh --nj "$decode_nj" --cmd "$decode_cmd" \
- exp/tri3/graph data/dev exp/tri3/decode_dev
+ exp/tri3/graph data/mfcc/dev exp/tri3/decode_dev
 
 steps/decode_fmllr.sh --nj "$decode_nj" --cmd "$decode_cmd" \
- exp/tri3/graph data/test exp/tri3/decode_test
+ exp/tri3/graph data/mfcc/test exp/tri3/decode_test
 
 echo ============================================================================
 echo "                        SGMM2 Training & Decoding                         "
 echo ============================================================================
 
 steps/align_fmllr.sh --nj "$train_nj" --cmd "$train_cmd" \
- data/train data/lang exp/tri3 exp/tri3_ali
+ data/mfcc/train data/lang exp/tri3 exp/tri3_ali
 
 exit 0 # From this point you can run Karel's DNN : local/nnet/run_dnn.sh
 
 steps/train_ubm.sh --cmd "$train_cmd" \
- $numGaussUBM data/train data/lang exp/tri3_ali exp/ubm4
+ $numGaussUBM data/mfcc/train data/mfcc/lang exp/tri3_ali exp/ubm4
 
 steps/train_sgmm2.sh --cmd "$train_cmd" $numLeavesSGMM $numGaussSGMM \
- data/train data/lang exp/tri3_ali exp/ubm4/final.ubm exp/sgmm2_4
+ data/mfcc/train data/lang exp/tri3_ali exp/ubm4/final.ubm exp/sgmm2_4
 
 utils/mkgraph.sh data/lang_test_bg exp/sgmm2_4 exp/sgmm2_4/graph
 
 steps/decode_sgmm2.sh --nj "$decode_nj" --cmd "$decode_cmd"\
- --transform-dir exp/tri3/decode_dev exp/sgmm2_4/graph data/dev \
+ --transform-dir exp/tri3/decode_dev exp/sgmm2_4/graph data/mfcc/dev \
  exp/sgmm2_4/decode_dev
 
 steps/decode_sgmm2.sh --nj "$decode_nj" --cmd "$decode_cmd"\
- --transform-dir exp/tri3/decode_test exp/sgmm2_4/graph data/test \
+ --transform-dir exp/tri3/decode_test exp/sgmm2_4/graph data/mfcc/test \
  exp/sgmm2_4/decode_test
 
 echo ============================================================================
@@ -165,24 +170,24 @@ echo ===========================================================================
 
 steps/align_sgmm2.sh --nj "$train_nj" --cmd "$train_cmd" \
  --transform-dir exp/tri3_ali --use-graphs true --use-gselect true \
- data/train data/lang exp/sgmm2_4 exp/sgmm2_4_ali
+ data/mfcc/train data/lang exp/sgmm2_4 exp/sgmm2_4_ali
 
 steps/make_denlats_sgmm2.sh --nj "$train_nj" --sub-split "$train_nj" \
  --acwt 0.2 --lattice-beam 10.0 --beam 18.0 \
  --cmd "$decode_cmd" --transform-dir exp/tri3_ali \
- data/train data/lang exp/sgmm2_4_ali exp/sgmm2_4_denlats
+ data/mfcc/train data/lang exp/sgmm2_4_ali exp/sgmm2_4_denlats
 
 steps/train_mmi_sgmm2.sh --acwt 0.2 --cmd "$decode_cmd" \
  --transform-dir exp/tri3_ali --boost 0.1 --drop-frames true \
- data/train data/lang exp/sgmm2_4_ali exp/sgmm2_4_denlats exp/sgmm2_4_mmi_b0.1
+ data/mfcc/train data/lang exp/sgmm2_4_ali exp/sgmm2_4_denlats exp/sgmm2_4_mmi_b0.1
 
 for iter in 1 2 3 4; do
   steps/decode_sgmm2_rescore.sh --cmd "$decode_cmd" --iter $iter \
-   --transform-dir exp/tri3/decode_dev data/lang_test_bg data/dev \
+   --transform-dir exp/tri3/decode_dev data/lang_test_bg data/mfcc/dev \
    exp/sgmm2_4/decode_dev exp/sgmm2_4_mmi_b0.1/decode_dev_it$iter
 
   steps/decode_sgmm2_rescore.sh --cmd "$decode_cmd" --iter $iter \
-   --transform-dir exp/tri3/decode_test data/lang_test_bg data/test \
+   --transform-dir exp/tri3/decode_test data/lang_test_bg data/mfcc/test \
    exp/sgmm2_4/decode_test exp/sgmm2_4_mmi_b0.1/decode_test_it$iter
 done
 
@@ -216,11 +221,11 @@ echo ===========================================================================
 
 for iter in 1 2 3 4; do
   local/score_combine.sh --cmd "$decode_cmd" \
-   data/dev data/lang_test_bg exp/tri4_nnet/decode_dev \
+   data/mfcc/dev data/lang_test_bg exp/tri4_nnet/decode_dev \
    exp/sgmm2_4_mmi_b0.1/decode_dev_it$iter exp/combine_2/decode_dev_it$iter
 
   local/score_combine.sh --cmd "$decode_cmd" \
-   data/test data/lang_test_bg exp/tri4_nnet/decode_test \
+   data/mfcc/test data/lang_test_bg exp/tri4_nnet/decode_test \
    exp/sgmm2_4_mmi_b0.1/decode_test_it$iter exp/combine_2/decode_test_it$iter
 done
 

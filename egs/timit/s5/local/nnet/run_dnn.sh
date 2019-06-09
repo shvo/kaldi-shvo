@@ -34,19 +34,23 @@ if [ $stage -le 0 ]; then
   dir=$data_fmllr/test
   steps/nnet/make_fmllr_feats.sh --nj 10 --cmd "$train_cmd" \
      --transform-dir $gmmdir/decode_test \
-     $dir data/test $gmmdir $dir/log $dir/data || exit 1
+     $dir data/mfcc/test $gmmdir $dir/log $dir/data || exit 1
   # dev
   dir=$data_fmllr/dev
   steps/nnet/make_fmllr_feats.sh --nj 10 --cmd "$train_cmd" \
      --transform-dir $gmmdir/decode_dev \
-     $dir data/dev $gmmdir $dir/log $dir/data || exit 1
+     $dir data/mfcc/dev $gmmdir $dir/log $dir/data || exit 1
   # train
   dir=$data_fmllr/train
   steps/nnet/make_fmllr_feats.sh --nj 10 --cmd "$train_cmd" \
      --transform-dir ${gmmdir}_ali \
-     $dir data/train $gmmdir $dir/log $dir/data || exit 1
+     $dir data/mfcc/train $gmmdir $dir/log $dir/data || exit 1
   # split the data : 90% train 10% cross-validation (held-out)
   utils/subset_data_dir_tr_cv.sh $dir ${dir}_tr90 ${dir}_cv10 || exit 1
+  # compute cmvn
+  steps/compute_cmvn_stats.sh $data_fmllr/train exp/make_fmlrr/train $data_fmllr
+  steps/compute_cmvn_stats.sh $data_fmllr/dev exp/make_fmlrr/dev $data_fmllr
+  steps/compute_cmvn_stats.sh $data_fmllr/test exp/make_fmlrr/test $data_fmllr
 fi
 
 if [ $stage -le 1 ]; then
