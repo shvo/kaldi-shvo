@@ -4,7 +4,7 @@
 
 # Begin configuration section.
 # End configuration section
-set -e -o pipefail
+#set -e -o pipefail
 
 
 errcho() { echo "$@" 1>&2; }
